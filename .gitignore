@@ -1,0 +1,6 @@
+node_modules/
+package-lock.json
+.mcp.json
+.env
+.DS_Store
+*.log
