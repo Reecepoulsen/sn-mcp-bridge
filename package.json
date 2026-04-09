@@ -8,8 +8,14 @@
   },
   "keywords": ["servicenow", "mcp", "model-context-protocol", "claude", "ai"],
   "license": "MIT",
+  "author": "Reece Poulsen",
   "repository": {
-    "type": "git"
+    "type": "git",
+    "url": "git+https://github.com/Reecepoulsen/sn-mcp-bridge.git"
+  },
+  "homepage": "https://github.com/Reecepoulsen/sn-mcp-bridge#readme",
+  "bugs": {
+    "url": "https://github.com/Reecepoulsen/sn-mcp-bridge/issues"
   },
   "engines": {
     "node": ">=18.0.0"
@@ -17,7 +23,8 @@
   "files": [
     "index.js",
     "sn-client.js",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.0",

@@ -56,12 +56,6 @@ For tasks that go beyond what CRUD can accomplish — testing logic, running com
 
 ## Quick Start
 
-```bash
-npx sn-mcp-bridge
-```
-
-## Configuration
-
 ### Environment Variables
 
 | Variable      | Required | Description                                                |
@@ -115,6 +109,7 @@ Add to `.vscode/mcp.json` in your project:
 {
 	"servers": {
 		"sn_mydev01": {
+			"type": "stdio",
 			"command": "npx",
 			"args": ["-y", "sn-mcp-bridge"],
 			"env": {
@@ -149,7 +144,7 @@ Add to `.cursor/mcp.json` in your project:
 
 ### Multiple Instances
 
-Configure separate server entries for each instance. Use the instance identifier as the server name so credentials don't collide:
+Configure separate server entries for each instance. Use a distinct server name for each so credentials are stored separately (Secretless AI keys credentials by server name, not by environment variable name):
 
 ```json
 {
@@ -191,6 +186,8 @@ The configuration examples above store your username and password as plaintext i
 2. Secretless rewrites your MCP config to reference the stored secrets instead of plaintext values
 3. When your AI tool starts the MCP server, Secretless resolves the credentials from the backend and passes them as environment variables
 4. The server runs normally — no code changes needed
+
+> Credentials are keyed by server name, so multiple instances (e.g. `sn_mydev01` and `sn_myprod01`) each get their own stored credentials even though they share the same environment variable names.
 
 ### Quick Setup
 
