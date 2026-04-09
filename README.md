@@ -1,10 +1,19 @@
 # sn-mcp-bridge
 
-A lightweight [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server for ServiceNow. Connects any MCP-compatible AI coding assistant to your ServiceNow instance through the standard REST APIs — no installation on the platform required.
+A lightweight [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server that gives AI coding assistants full development capability on ServiceNow — no installation required anywhere. It runs locally via `npx` and connects to ServiceNow through the Table API.
 
-- **13 tools** covering CRUD, schema introspection, app discovery, aggregation, code search, and background script execution
-- **Plain JS, no build step** — 2 source files, native `fetch`, runs on Node.js 18+
-- **Easy to extend** — adding a tool is one `server.registerTool()` call
+ServiceNow is a record-based development platform. Script includes, business rules, client scripts, UI actions, ACLs — every development artifact is a record in a system table. There is no separate "code layer"; the Table API **is** the development API. That means CRUD operations through this server aren't just for querying data — they're how you build:
+
+- `insert_record` into `sys_script_include` → create a new script include
+- `update_record` on `sys_script` → modify a business rule
+- `query_data` on `sys_script_client` → read all client scripts for a table
+- `delete_record` on `sys_ui_action` → remove a UI action
+
+For tasks that go beyond CRUD — testing logic, running complex GlideRecord queries, calling script includes, or multi-step transactions — `execute_script` provides a full server-side JavaScript runtime.
+
+The server runs with the permissions of whatever user account you provide credentials for — it can only read/write tables and fields that user has access to. The `execute_script` tool requires admin credentials since it runs background scripts via `sys.scripts.do`.
+
+There are plenty of open-source ServiceNow MCP servers being shared in the community. This one exists to stay simple, pure, and easy to improve — plain JS with no build step (2 source files, native `fetch`, Node.js 18+), and adding a tool is one `server.registerTool()` call.
 
 ## Tools
 
@@ -41,30 +50,19 @@ A lightweight [Model Context Protocol](https://modelcontextprotocol.io) (MCP) se
 | `search_code`    | Search across script fields using the native Code Search API (falls back to table queries if the plugin is unavailable) |
 | `execute_script` | Run a background script on the instance via sys.scripts.do                                                              |
 
-## Why CRUD = Full Development
-
-ServiceNow is a record-based development platform. Script includes, business rules, client scripts, UI actions, ACLs — every development artifact is a record in a system table. There is no separate "code layer"; the Table API **is** the development API.
-
-That means the CRUD tools in this server aren't just for querying data — they give you full development capability:
-
-- `insert_record` into `sys_script_include` → create a new script include
-- `update_record` on `sys_script` → modify a business rule
-- `query_data` on `sys_script_client` → read all client scripts for a table
-- `delete_record` on `sys_ui_action` → remove a UI action
-
-For tasks that go beyond what CRUD can accomplish — testing logic, running complex GlideRecord queries, calling script includes, or performing multi-step transactions — use `execute_script` as a full server-side JavaScript runtime.
-
 ## Quick Start
 
 ### Environment Variables
 
-| Variable      | Required | Description                                                |
-| ------------- | -------- | ---------------------------------------------------------- |
-| `SN_INSTANCE` | Yes      | Your instance URL (e.g. `https://mydev01.service-now.com`) |
-| `SN_USERNAME` | Yes      | Username for basic auth                                    |
-| `SN_PASSWORD` | Yes      | Password for basic auth                                    |
+| Variable                      | Description                                                |
+| ----------------------------- | ---------------------------------------------------------- |
+| `SN_INSTANCE`                 | Your instance URL (e.g. `https://mydev01.service-now.com`) |
+| `SN_<INSTANCE_NAME>_USERNAME` | Username for basic auth                                    |
+| `SN_<INSTANCE_NAME>_PASSWORD` | Password for basic auth                                    |
 
-The examples below use plaintext credentials to get you up and running quickly. **Once you've confirmed the connection works, we strongly recommend securing your credentials** using [Secretless AI](https://github.com/opena2a-org/secretless-ai) — see [Securing Credentials](#securing-credentials).
+`<INSTANCE_NAME>` is the subdomain from `SN_INSTANCE`, uppercased with hyphens replaced by underscores (e.g. `https://mydev01.service-now.com` → `SN_MYDEV01_USERNAME`). If the prefixed vars aren't set, the bridge falls back to `SN_USERNAME` / `SN_PASSWORD`.
+
+> **Warning:** The examples below use plaintext credentials to get you running quickly. This means your password is stored in a file on disk **and** visible to the AI assistant in every API call to the LLM provider. Once you've confirmed the connection works, it is highly recommended that you follow the [Securing Credentials with Secretless AI](#securing-credentials-with-secretless-ai) instructions to move plaintext secrets out of your config!
 
 ### Claude Code
 
@@ -78,8 +76,8 @@ Add to `.mcp.json` in your project root (only available in that project) or `~/.
 			"args": ["-y", "sn-mcp-bridge"],
 			"env": {
 				"SN_INSTANCE": "https://mydev01.service-now.com",
-				"SN_USERNAME": "your_username",
-				"SN_PASSWORD": "your_password"
+				"SN_MYDEV01_USERNAME": "your_username",
+				"SN_MYDEV01_PASSWORD": "your_password"
 			}
 		}
 	}
@@ -97,8 +95,8 @@ args = ["-y", "sn-mcp-bridge"]
 
 [mcp_servers.sn_mydev01.env]
 SN_INSTANCE = "https://mydev01.service-now.com"
-SN_USERNAME = "your_username"
-SN_PASSWORD = "your_password"
+SN_MYDEV01_USERNAME = "your_username"
+SN_MYDEV01_PASSWORD = "your_password"
 ```
 
 ### VS Code (GitHub Copilot)
@@ -114,8 +112,8 @@ Add to `.vscode/mcp.json` in your project:
 			"args": ["-y", "sn-mcp-bridge"],
 			"env": {
 				"SN_INSTANCE": "https://mydev01.service-now.com",
-				"SN_USERNAME": "your_username",
-				"SN_PASSWORD": "your_password"
+				"SN_MYDEV01_USERNAME": "your_username",
+				"SN_MYDEV01_PASSWORD": "your_password"
 			}
 		}
 	}
@@ -134,8 +132,8 @@ Add to `.cursor/mcp.json` in your project:
 			"args": ["-y", "sn-mcp-bridge"],
 			"env": {
 				"SN_INSTANCE": "https://mydev01.service-now.com",
-				"SN_USERNAME": "your_username",
-				"SN_PASSWORD": "your_password"
+				"SN_MYDEV01_USERNAME": "your_username",
+				"SN_MYDEV01_PASSWORD": "your_password"
 			}
 		}
 	}
@@ -144,62 +142,63 @@ Add to `.cursor/mcp.json` in your project:
 
 ### Multiple Instances
 
-Configure separate server entries for each instance. Use a distinct server name for each so credentials are stored separately (Secretless AI keys credentials by server name, not by environment variable name):
+Add a separate server entry for each instance. The config format is the same as above — just repeat the pattern with a different server name and instance-specific credentials.
+
+## Securing Credentials with [Secretless AI](https://github.com/opena2a-org/secretless-ai)
+
+[Secretless AI](https://github.com/opena2a-org/secretless-ai) stores your credentials in a secure backend and injects them at runtime via `secretless-ai run`.
+
+### Setup
+
+**1. Store your credentials:**
+
+```bash
+npx secretless-ai secret set SN_MYDEV01_USERNAME=your_username
+
+# Omit the value so it prompts interactively — keeps the password out of shell history
+npx secretless-ai secret set SN_MYDEV01_PASSWORD
+```
+
+**2. Update your MCP config** to use `secretless-ai run` as a wrapper. The `--only` flag tells it which secrets to inject. `SN_INSTANCE` is not a secret and stays in the env block:
 
 ```json
 {
 	"mcpServers": {
 		"sn_mydev01": {
 			"command": "npx",
-			"args": ["-y", "sn-mcp-bridge"],
+			"args": ["-y", "secretless-ai", "run", "--only", "SN_MYDEV01_USERNAME,SN_MYDEV01_PASSWORD", "--", "npx", "-y", "sn-mcp-bridge"],
 			"env": {
-				"SN_INSTANCE": "https://mydev01.service-now.com",
-				"SN_USERNAME": "your_username",
-				"SN_PASSWORD": "your_password"
-			}
-		},
-		"sn_myprod01": {
-			"command": "npx",
-			"args": ["-y", "sn-mcp-bridge"],
-			"env": {
-				"SN_INSTANCE": "https://myprod01.service-now.com",
-				"SN_USERNAME": "your_username",
-				"SN_PASSWORD": "your_password"
+				"SN_INSTANCE": "https://mydev01.service-now.com"
 			}
 		}
 	}
 }
 ```
 
-## Securing Credentials
+For multiple instances, repeat the pattern — store each instance's credentials under its prefixed names and add a server entry with the corresponding `--only` list:
 
-The configuration examples above store your username and password as plaintext in JSON/TOML files. This has two problems:
-
-1. **On disk** — anyone with access to the file can read your password
-2. **In AI context** — the credentials are visible to the AI assistant and included in API calls to the LLM provider
-
-[Secretless AI](https://github.com/opena2a-org/secretless-ai) fixes this. It scans your MCP configs, moves credentials to a secure backend (like macOS Keychain), and rewrites the config so credentials are injected at runtime. Your MCP server starts exactly the same way — the only difference is that the password is no longer sitting in a plaintext file.
-
-### How It Works
-
-1. You store credentials in a secure backend (Keychain, 1Password, etc.)
-2. Secretless rewrites your MCP config to reference the stored secrets instead of plaintext values
-3. When your AI tool starts the MCP server, Secretless resolves the credentials from the backend and passes them as environment variables
-4. The server runs normally — no code changes needed
-
-> Credentials are keyed by server name, so multiple instances (e.g. `sn_mydev01` and `sn_myprod01`) each get their own stored credentials even though they share the same environment variable names.
-
-### Quick Setup
-
-Once you've confirmed sn-mcp-bridge works with plaintext credentials (as shown in the configuration examples above), run:
-
-> **Note:** `protect-mcp` scans and protects **all** MCP server configs it finds, not just sn-mcp-bridge. If you have other MCP servers with plaintext API keys, those will be secured too. This is good from a security standpoint, but worth being aware of. You can always run `npx secretless-ai mcp-status` to see what was changed and `npx secretless-ai mcp-unprotect` to revert.
-
-```bash
-npx secretless-ai protect-mcp --backend keychain
+```json
+{
+	"mcpServers": {
+		"sn_mydev01": {
+			"command": "npx",
+			"args": ["-y", "secretless-ai", "run", "--only", "SN_MYDEV01_USERNAME,SN_MYDEV01_PASSWORD", "--", "npx", "-y", "sn-mcp-bridge"],
+			"env": {
+				"SN_INSTANCE": "https://mydev01.service-now.com"
+			}
+		},
+		"sn_myprod01": {
+			"command": "npx",
+			"args": ["-y", "secretless-ai", "run", "--only", "SN_MYPROD01_USERNAME,SN_MYPROD01_PASSWORD", "--", "npx", "-y", "sn-mcp-bridge"],
+			"env": {
+				"SN_INSTANCE": "https://myprod01.service-now.com"
+			}
+		}
+	}
+}
 ```
 
-Secretless will scan your MCP configs (Claude Code, Cursor, VS Code, Codex, etc.), find the plaintext `SN_USERNAME` and `SN_PASSWORD` values, move them to the selected backend, and rewrite the configs. Non-secret values like `SN_INSTANCE` are left as-is. This works across multiple instances automatically.
+The config format for other editors follows the same pattern shown in [Quick Start](#quick-start) — just replace the `command`/`args` with the secretless wrapper.
 
 ### Supported Backends
 
@@ -211,15 +210,22 @@ Secretless will scan your MCP configs (Claude Code, Cursor, VS Code, Codex, etc.
 | HashiCorp Vault      | `--backend vault`     | Enterprise and self-hosted deployments                                                            |
 | GCP Secret Manager   | `--backend gcp-sm`    | GCP-native workloads                                                                              |
 
-### Managing Protected Configs
+### Alternative: `protect-mcp`
+
+If your MCP configs are in **global** config paths (e.g. `~/.vscode/mcp.json`, `~/.cursor/mcp.json`), you can use `protect-mcp` to automatically scan and secure them in one shot:
 
 ```bash
-# Check which MCP servers have protected credentials
-npx secretless-ai mcp-status
+npx secretless-ai protect-mcp --backend keychain
+```
 
-# Restore original plaintext configs from backup
+You can check status or revert with `mcp-status` and `mcp-unprotect`:
+
+```bash
+npx secretless-ai mcp-status
 npx secretless-ai mcp-unprotect
 ```
+
+> **Limitation:** `protect-mcp`, `mcp-status`, and `mcp-unprotect` only discover global config files. They do **not** find workspace-level configs like `.vscode/mcp.json`, `.mcp.json`, or `.codex/config.toml` inside project directories. For workspace configs, use the `secret set` + `run` approach above.
 
 For more details on Secretless AI, see the [full documentation](https://github.com/opena2a-org/secretless-ai).
 

@@ -7,16 +7,19 @@ import { SnClient } from "./sn-client.js";
 
 // ── Config ──────────────────────────────────────────────────────────────────
 
-const instance = process.env.SN_INSTANCE;
-const username = process.env.SN_USERNAME;
-const password = process.env.SN_PASSWORD;
+const instanceURL = process.env.SN_INSTANCE;
+const instanceName = instanceURL ? new URL(instanceURL).hostname.split('.')[0].toUpperCase().replace(/-/g, '_') : null;
+const prefix = instanceName ? `SN_${instanceName}` : null;
 
-if (!instance || !username || !password) {
+const username = (prefix && process.env[`${prefix}_USERNAME`]) || process.env.SN_USERNAME;
+const password = (prefix && process.env[`${prefix}_PASSWORD`]) || process.env.SN_PASSWORD;
+
+if (!instanceURL || !username || !password) {
 	console.error("sn-mcp-bridge: Missing required env vars: SN_INSTANCE, SN_USERNAME, SN_PASSWORD");
 	process.exit(1);
 }
 
-const client = new SnClient({ instance, username, password });
+const client = new SnClient({ instance: instanceURL, username, password });
 const server = new McpServer(
 	{ name: "sn-mcp-bridge", version: "1.0.0" },
 	{
@@ -551,4 +554,4 @@ server.registerTool(
 
 const transport = new StdioServerTransport();
 await server.connect(transport);
-console.error(`sn-mcp-bridge running — ${instance}`);
+console.error(`sn-mcp-bridge running — ${instanceURL}`);
