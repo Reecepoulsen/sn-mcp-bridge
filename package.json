@@ -1,12 +1,18 @@
 {
   "name": "sn-mcp-bridge",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Lightweight MCP server for the ServiceNow Table API",
   "type": "module",
   "bin": {
     "sn-mcp-bridge": "./index.js"
   },
-  "keywords": ["servicenow", "mcp", "model-context-protocol", "claude", "ai"],
+  "keywords": [
+    "servicenow",
+    "mcp",
+    "model-context-protocol",
+    "claude",
+    "ai"
+  ],
   "license": "MIT",
   "author": "Reece Poulsen",
   "repository": {
