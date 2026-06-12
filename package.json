@@ -4,7 +4,7 @@
   "description": "Lightweight MCP server for the ServiceNow Table API",
   "type": "module",
   "bin": {
-    "sn-mcp-bridge": "./index.js"
+    "sn-mcp-bridge": "index.js"
   },
   "keywords": [
     "servicenow",
