@@ -29,6 +29,7 @@
   "files": [
     "index.js",
     "sn-client.js",
+    "dbml.js",
     "README.md",
     "LICENSE"
   ],

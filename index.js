@@ -4,6 +4,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { SnClient } from "./sn-client.js";
+import { generateDBML } from "./dbml.js";
 
 // ── Config ──────────────────────────────────────────────────────────────────
 
@@ -530,6 +531,37 @@ server.registerTool(
 		}
 
 		return ok(resultsByTable);
+	}
+);
+
+// ── DBML Generation Tool ───────────────────────────────────────────────────
+
+server.registerTool(
+	"generate_dbml",
+	{
+		description: "Generate DBML (Database Markup Language) for ServiceNow tables. Provide 'table' for a single table, 'scope' for all tables in an app scope, or 'encodedQuery' for a custom sys_db_object query. Output includes table definitions with column types, reference relationships, choice enums, inheritance, and reference helper stubs for out-of-scope tables.",
+		inputSchema: {
+			table: z.string().optional().describe("Generate DBML for a single table by name (e.g. 'incident')"),
+			scope: z.string().optional().describe("Generate DBML for all tables in an application scope (e.g. 'x_myapp')"),
+			encodedQuery: z.string().optional().describe("Generate DBML for tables matching this encoded query against sys_db_object"),
+			options: z.object({
+				getInheritedColumns: z.boolean().optional().default(false).describe("Include columns inherited from parent tables in the hierarchy"),
+				getSysColumns: z.boolean().optional().default(false).describe("Include system columns (sys_created_on, sys_updated_by, etc.)"),
+				onlyReferences: z.boolean().optional().default(false).describe("Only include reference fields and primary keys — useful for relationship diagrams"),
+				limit: z.number().optional().describe("Max number of tables to include"),
+			}).optional(),
+		},
+	},
+	async ({ table, scope, encodedQuery, options = {} }) => {
+		let query;
+		if (table) query = `name=${table}`;
+		else if (scope) query = `sys_scope.scope=${scope}`;
+		else if (encodedQuery) query = encodedQuery;
+		else throw new Error("generate_dbml: provide at least one of 'table', 'scope', or 'encodedQuery'");
+
+		const dbml = await generateDBML(client, query, options);
+		if (!dbml) return { content: [{ type: "text", text: "No tables matched the query." }] };
+		return { content: [{ type: "text", text: dbml }] };
 	}
 );
 
