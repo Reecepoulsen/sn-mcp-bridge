@@ -75,6 +75,7 @@ function tableParams({ query, fields, limit, displayValue } = {}) {
 	return params;
 }
 
+
 // ── CRUD Tools ──────────────────────────────────────────────────────────────
 
 server.registerTool(
@@ -579,6 +580,198 @@ server.registerTool(
 	async ({ script, scope }) => {
 		const output = await client.executeScript(script, scope);
 		return ok({ output });
+	}
+);
+
+// ── Diagnostics Tools ───────────────────────────────────────────────────────
+
+server.registerTool(
+	"explore_syslog",
+	{
+		description: "Query the ServiceNow application log (syslog table). Shows gs.info/warn/error output, script include logs, and application exceptions. Runs in global scope — required because syslog is not accessible via the Table API. Use this as layer 3 of the diagnostic stack: did our scripts run and what did they log?",
+		inputSchema: {
+			encodedQuery: z.string().optional().describe("ServiceNow encoded query string applied directly to the syslog table (overrides other filters)"),
+			minutesAgo: z.number().optional().describe("Only return logs from the last N minutes. Defaults to 15 when no encodedQuery is provided."),
+			level: z.enum(["info", "warning", "error"]).optional().describe("Filter by log level"),
+			messageContains: z.string().optional().describe("Filter to logs whose message contains this string"),
+			sourceContains: z.string().optional().describe("Filter by source (script include name, class name, etc.)"),
+			session: z.string().optional().describe("Filter to a specific session ID"),
+			limit: z.number().optional().describe("Max records to return. Default 100, max 500."),
+		},
+	},
+	async ({ encodedQuery, minutesAgo, level, messageContains, sourceContains, session, limit }) => {
+		// Default to last 15 minutes when no time or encoded query is provided
+		const effectiveMinutes = minutesAgo ?? (encodedQuery ? undefined : 15);
+
+		const lines = ["var gr = new GlideRecord('syslog');"];
+		if (encodedQuery) lines.push(`gr.addEncodedQuery(${JSON.stringify(encodedQuery)});`);
+		if (effectiveMinutes) lines.push(`gr.addQuery('sys_created_on', '>', gs.minutesAgoStart(${Math.floor(Number(effectiveMinutes))}));`);
+		if (level) lines.push(`gr.addQuery('level', ${JSON.stringify(level)});`);
+		if (messageContains) lines.push(`gr.addQuery('message', 'CONTAINS', ${JSON.stringify(messageContains)});`);
+		if (sourceContains) lines.push(`gr.addQuery('source', 'CONTAINS', ${JSON.stringify(sourceContains)});`);
+		if (session) lines.push(`gr.addQuery('session', ${JSON.stringify(session)});`);
+		lines.push(`gr.orderByDesc('sys_created_on');`);
+		lines.push(`gr.setLimit(${Math.min(Math.floor(Number(limit) || 100), 500)});`);
+		lines.push("gr.query();");
+		lines.push("var results = [];");
+		lines.push("while (gr.next()) {");
+		lines.push("    results.push({");
+		lines.push("        created: gr.getValue('sys_created_on'),");
+		lines.push("        level:   gr.getValue('level'),");
+		lines.push("        source:  gr.getValue('source'),");
+		lines.push("        message: gr.getValue('message'),");
+		lines.push("        session: gr.getValue('session')");
+		lines.push("    });");
+		lines.push("}");
+		lines.push("gs.print(JSON.stringify({ count: results.length, logs: results }));");
+		const script = lines.join("\n");
+
+		const rawOutput = await client.executeScript(script, "global");
+		const jsonStart = rawOutput.indexOf("{");
+		if (jsonStart === -1) throw new Error(`explore_syslog: no JSON in script output: ${rawOutput.slice(0, 300)}`);
+		return ok(JSON.parse(rawOutput.slice(jsonStart)));
+	}
+);
+
+server.registerTool(
+	"explore_syslog_transaction",
+	{
+		description: "Query the ServiceNow transaction log (syslog_transaction table). Shows every HTTP request that reached the SN application layer — URL, user, response code, session. Runs in global scope — required because syslog_transaction is not accessible via the Table API. IMPORTANT: if a transaction does not appear here, the request never reached the application layer — it was blocked at the network/ADC level. Use this as layer 2 of the diagnostic stack: did the request reach the application?",
+		inputSchema: {
+			encodedQuery: z.string().optional().describe("ServiceNow encoded query string applied directly to the syslog_transaction table"),
+			minutesAgo: z.number().optional().describe("Only return transactions from the last N minutes. Defaults to 15 when no encodedQuery is provided."),
+			urlContains: z.string().optional().describe("Filter transactions where the URL contains this string"),
+			session: z.string().optional().describe("Filter to a specific session ID"),
+			user: z.string().optional().describe("Filter by username"),
+			responseCode: z.string().optional().describe("Filter by HTTP response code (e.g. '200', '401')"),
+			limit: z.number().optional().describe("Max records to return. Default 50, max 200."),
+		},
+	},
+	async ({ encodedQuery, minutesAgo, urlContains, session, user, responseCode, limit }) => {
+		const effectiveMinutes = minutesAgo ?? (encodedQuery ? undefined : 15);
+
+		const lines = ["var gr = new GlideRecord('syslog_transaction');"];
+		if (encodedQuery) lines.push(`gr.addEncodedQuery(${JSON.stringify(encodedQuery)});`);
+		if (effectiveMinutes) lines.push(`gr.addQuery('sys_created_on', '>', gs.minutesAgoStart(${Math.floor(Number(effectiveMinutes))}));`);
+		if (urlContains) lines.push(`gr.addQuery('url', 'CONTAINS', ${JSON.stringify(urlContains)});`);
+		if (session) lines.push(`gr.addQuery('session', ${JSON.stringify(session)});`);
+		if (user) lines.push(`gr.addQuery('user_name', ${JSON.stringify(user)});`);
+		if (responseCode) lines.push(`gr.addQuery('response_code', ${JSON.stringify(responseCode)});`);
+		lines.push(`gr.orderByDesc('sys_created_on');`);
+		lines.push(`gr.setLimit(${Math.min(Math.floor(Number(limit) || 50), 200)});`);
+		lines.push("gr.query();");
+		lines.push("var results = [];");
+		lines.push("while (gr.next()) {");
+		lines.push("    results.push({");
+		lines.push("        created:  gr.getValue('sys_created_on'),");
+		lines.push("        url:      gr.getValue('url'),");
+		lines.push("        response: gr.getValue('response_code'),");
+		lines.push("        session:  gr.getValue('session'),");
+		lines.push("        user:     gr.getValue('user_name'),");
+		lines.push("        source:   gr.getValue('source'),");
+		lines.push("        type:     gr.getValue('type')");
+		lines.push("    });");
+		lines.push("}");
+		lines.push("gs.print(JSON.stringify({ count: results.length, transactions: results }));");
+		const script = lines.join("\n");
+
+		const rawOutput = await client.executeScript(script, "global");
+		const jsonStart = rawOutput.indexOf("{");
+		if (jsonStart === -1) throw new Error(`explore_syslog_transaction: no JSON in script output: ${rawOutput.slice(0, 300)}`);
+		return ok(JSON.parse(rawOutput.slice(jsonStart)));
+	}
+);
+
+server.registerTool(
+	"explore_node_logs",
+	{
+		description: "Read the raw instance node logs — the deepest observability layer. Shows everything including requests blocked before scripts run, auth failures at the platform layer, scheduler activity, and session management. The only way to confirm whether a request reached the physical server at all. Uses the SN log file browser UI (ui_page_process.do) via HTTP + HTML parse, since the underlying Java API is security-restricted from scripts. Use this as layer 1 of the diagnostic stack: did the request reach the server? Time parameters are in UTC.",
+		inputSchema: {
+			minutesAgo: z.number().optional().describe("Look at the last N minutes. Takes precedence over startTime/endTime. Defaults to 15 when no startTime is provided."),
+			startTime: z.string().optional().describe("Start of time window in SN datetime format: 'yyyy-MM-dd HH:mm:ss' (instance local time, same as gs.nowDateTime())"),
+			endTime: z.string().optional().describe("End of time window in SN datetime format: 'yyyy-MM-dd HH:mm:ss' (instance local time). Defaults to now."),
+			level: z.enum(["all", "trace", "debug", "info", "warning", "error", "fatal"]).optional().default("all").describe("Minimum log level to include. Default: all."),
+			session: z.string().optional().describe("Filter to a specific session ID (32-char hex from the Session Id column)"),
+			messageContains: z.string().optional().describe("Filter to entries whose message contains this string"),
+			thread: z.string().optional().describe("Filter by thread name (e.g. 'http-34')"),
+			omitWorkers: z.boolean().optional().default(true).describe("Omit background worker thread entries. Default true — keeps output focused on HTTP transactions."),
+			maxRows: z.number().optional().describe("Maximum log entries to return. Default 500, max 2000."),
+		},
+	},
+	async ({ minutesAgo, startTime, endTime, level = "all", session, messageContains, thread, omitWorkers = true, maxRows }) => {
+		const LEVEL_CODES = { all: 4, trace: 5, debug: 3, info: 0, warning: 1, error: 2, fatal: 6 };
+		const levelCode = LEVEL_CODES[level] ?? 4;
+
+		// Compute time window: minutesAgo takes precedence, then explicit startTime, then default 15 minutes.
+		// Times must be in instance local time — fetch the configured timezone first.
+		let effectiveStart = startTime;
+		let effectiveEnd = endTime;
+
+		if (minutesAgo || !startTime) {
+			const effectiveMinutes = minutesAgo || 15;
+
+			// Resolve effective timezone. Priority:
+			//   1. sys_user.time_zone (user override)
+			//   2. glide.sys.default.tz system property
+			//   3. execute_script fallback — when both are unset the instance uses the JVM
+			//      timezone, which is not queryable via REST.
+			const [userResp, propResp] = await Promise.all([
+				client.get("/api/now/table/sys_user", {
+					sysparm_query: `user_name=${client.username}`,
+					sysparm_fields: "time_zone",
+					sysparm_limit: "1",
+				}),
+				client.get("/api/now/table/sys_properties", {
+					sysparm_query: "name=glide.sys.default.tz",
+					sysparm_fields: "value",
+					sysparm_limit: "1",
+				}),
+			]);
+
+			const tz = userResp.result?.[0]?.time_zone || propResp.result?.[0]?.value || null;
+
+			if (tz) {
+				const fmt = (date) => {
+					const parts = new Intl.DateTimeFormat("en-CA", {
+						timeZone: tz,
+						year: "numeric", month: "2-digit", day: "2-digit",
+						hour: "2-digit", minute: "2-digit", second: "2-digit",
+						hour12: false,
+					}).formatToParts(date);
+					const get = (type) => parts.find((p) => p.type === type)?.value ?? "00";
+					return `${get("year")}-${get("month")}-${get("day")} ${get("hour")}:${get("minute")}:${get("second")}`;
+				};
+				const now = new Date();
+				effectiveStart = fmt(new Date(now.getTime() - effectiveMinutes * 60 * 1000));
+				effectiveEnd = fmt(now);
+			} else {
+				// JVM timezone fallback: get server's local "now" from gs.nowDateTime() and
+				// subtract minutes via pure string arithmetic (no timezone conversion needed).
+				const timeOutput = await client.executeScript("gs.print(gs.nowDateTime());", "global");
+				const serverNow = timeOutput.replace(/\*\*\* Script:\s*/i, "").trim();
+				const [datePart, timePart] = serverNow.split(" ");
+				const [year, month, day] = datePart.split("-").map(Number);
+				const [hour, min, sec] = timePart.split(":").map(Number);
+				const d = new Date(Date.UTC(year, month - 1, day, hour, min, sec));
+				d.setUTCMinutes(d.getUTCMinutes() - effectiveMinutes);
+				const pad = (n) => String(n).padStart(2, "0");
+				effectiveStart = `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`;
+				effectiveEnd = serverNow;
+			}
+		}
+
+		const result = await client.fetchNodeLogs({
+			startTime: effectiveStart,
+			endTime: effectiveEnd,
+			levelCode,
+			session,
+			messageFilter: messageContains,
+			threadFilter: thread,
+			omitWorkers,
+			maxRows,
+		});
+
+		return ok(result);
 	}
 );
 

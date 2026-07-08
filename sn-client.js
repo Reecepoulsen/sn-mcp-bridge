@@ -99,20 +99,18 @@ export class SnClient {
 	}
 
 	/**
-	 * @name executeScript
-	 * @description Executes a background script on the ServiceNow instance via the sys.scripts.do form endpoint.
-	 * @param {string} script - The JavaScript code to execute
-	 * @param {string} [scope="global"] - The app scope to run in ("global" or a scope sys_id)
-	 * @returns {string} The script output extracted from the response
+	 * @name _getSession
+	 * @description Logs in via the SN form endpoint and returns session cookies and CSRF token.
+	 * Shared by executeScript and fetchNodeLogs.
+	 * @returns {{ cookies: string, csrfToken: string }}
 	 */
-	async executeScript(script, scope = "global") {
+	async _getSession() {
 		const formHeaders = {
 			"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
 			"User-Agent": "sn-mcp-bridge",
 			"Accept": "*/*",
 		};
 
-		// Step 1: Login with manual redirect handling to capture cookies from all responses
 		const cookieMap = {};
 
 		let response = await fetch(`${this.baseUrl}/login.do`, {
@@ -127,42 +125,54 @@ export class SnClient {
 			}).toString(),
 		});
 
-		// Collect cookies using a map to handle cookie updates/overwrites
 		this._collectCookies(response, cookieMap);
 
 		// Follow redirects manually to accumulate cookies across hops
 		let maxRedirects = 10;
 		while (response.status >= 300 && response.status < 400 && maxRedirects-- > 0) {
-			// Consume the body to free the connection
 			await response.text();
-
 			const location = response.headers.get("location");
 			if (!location) break;
-
 			const redirectUrl = location.startsWith("http") ? location : new URL(location, this.baseUrl).href;
 			response = await fetch(redirectUrl, {
 				method: "GET",
 				headers: { ...formHeaders, Cookie: this._cookieString(cookieMap) },
 				redirect: "manual",
 			});
-
 			this._collectCookies(response, cookieMap);
 		}
 
 		const cookies = this._cookieString(cookieMap);
 		if (!cookies) {
-			throw new Error("SnClient - executeScript: no session cookies received from login");
+			throw new Error("SnClient - _getSession: no session cookies received from login");
 		}
 
-		// Step 2: Extract CSRF token from the final page HTML
 		const loginHtml = await response.text();
 		const ckMatch = loginHtml.split("var g_ck = '");
 		if (ckMatch.length < 2) {
-			throw new Error(`SnClient - executeScript: unable to extract CSRF token (g_ck) from login response (status: ${response.status}, length: ${loginHtml.length})`);
+			throw new Error(`SnClient - _getSession: unable to extract CSRF token (g_ck) from login response (status: ${response.status}, length: ${loginHtml.length})`);
 		}
-		const sysparmCk = ckMatch[1].split("'")[0];
+		const csrfToken = ckMatch[1].split("'")[0];
 
-		// Step 3: Execute the background script
+		return { cookies, csrfToken };
+	}
+
+	/**
+	 * @name executeScript
+	 * @description Executes a background script on the ServiceNow instance via the sys.scripts.do form endpoint.
+	 * @param {string} script - The JavaScript code to execute
+	 * @param {string} [scope="global"] - The app scope to run in ("global" or a scope sys_id)
+	 * @returns {string} The script output extracted from the response
+	 */
+	async executeScript(script, scope = "global") {
+		const { cookies, csrfToken } = await this._getSession();
+
+		const formHeaders = {
+			"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+			"User-Agent": "sn-mcp-bridge",
+			"Accept": "*/*",
+		};
+
 		const scriptResponse = await fetch(
 			`${this.baseUrl}/sys.scripts.do?sysparm_transaction_scope=${scope}`,
 			{
@@ -171,7 +181,7 @@ export class SnClient {
 				redirect: "follow",
 				body: new URLSearchParams({
 					script,
-					sysparm_ck: sysparmCk,
+					sysparm_ck: csrfToken,
 					sys_scope: scope,
 					runscript: "Run script",
 					quota_managed_transaction: "on",
@@ -184,7 +194,6 @@ export class SnClient {
 			throw new Error(`SnClient - executeScript: script execution failed with status ${scriptResponse.status}`);
 		}
 
-		// Step 4: Extract output from <PRE> tags in the HTML response
 		const scriptHtml = await scriptResponse.text();
 		const preMatches = scriptHtml.match(/<PRE[^>]*>([\s\S]*?)<\/PRE>/gi);
 
@@ -192,7 +201,6 @@ export class SnClient {
 			return "(no output)";
 		}
 
-		// Strip the PRE tags and clean up HTML entities
 		return preMatches
 			.map((m) => m
 				.replace(/<\/?PRE[^>]*>/gi, "")
@@ -202,6 +210,126 @@ export class SnClient {
 				.trim()
 			)
 			.join("\n");
+	}
+
+	/**
+	 * @name fetchNodeLogs
+	 * @description Fetches node log entries from the SN log file browser UI page (sys_id 261f9548c0a80164000574e69b0a7b29).
+	 * This is the only way to access node-level logs from outside the server — Java APIs are security-restricted from scripts.
+	 * @param {object} params
+	 * @param {string} [params.startTime] - Start of time window in 'yyyy-MM-dd HH:mm:ss' format (instance local time)
+	 * @param {string} [params.endTime] - End of time window
+	 * @param {number} params.levelCode - Numeric level code (all=4, trace=5, debug=3, info=0, warning=1, error=2, fatal=6)
+	 * @param {string} [params.session] - Filter by session ID
+	 * @param {string} [params.messageFilter] - Filter by message content
+	 * @param {string} [params.threadFilter] - Filter by thread name
+	 * @param {boolean} [params.omitWorkers=true] - Omit background worker thread entries
+	 * @param {number} [params.maxRows=500] - Maximum log rows to return
+	 * @returns {{ count: number, entries: Array<{ timestamp, level, thread, session, message }> }}
+	 */
+	async fetchNodeLogs({ startTime, endTime, levelCode, session, messageFilter, threadFilter, omitWorkers = true, maxRows = 500 }) {
+		const { cookies, csrfToken } = await this._getSession();
+
+		const formBody = new URLSearchParams({
+			sysparm_ck: csrfToken,
+			start_time: startTime || "",
+			end_time: endTime || "",
+			level: String(levelCode),
+			max_rows: String(Math.min(maxRows, 2000)),
+			filter_session: session || "",
+			message: messageFilter || "",
+			filter_thread: threadFilter || "",
+			omit_workers: omitWorkers ? "true" : "false",
+			match_session: "true",
+			match_level: String(levelCode),
+			sys_action: "none",
+		});
+
+		const response = await fetch(
+			`${this.baseUrl}/ui_page_process.do?sys_id=261f9548c0a80164000574e69b0a7b29`,
+			{
+				method: "POST",
+				headers: {
+					"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+					"User-Agent": "sn-mcp-bridge",
+					"Accept": "text/html,*/*",
+					Cookie: cookies,
+				},
+				redirect: "follow",
+				body: formBody.toString(),
+			}
+		);
+
+		if (!response.ok) {
+			throw new Error(`SnClient - fetchNodeLogs: request failed with status ${response.status}`);
+		}
+
+		const html = await response.text();
+		return this._parseNodeLogHtml(html);
+	}
+
+	/**
+	 * @name _parseNodeLogHtml
+	 * @description Parses the HTML table returned by the SN log file browser into structured JSON.
+	 * Each row has 5 cells: Timestamp, Level, Thread name, Session Id, Message.
+	 * @param {string} html - The raw HTML response from ui_page_process.do
+	 * @returns {{ count: number, entries: Array }}
+	 */
+	_parseNodeLogHtml(html) {
+		// Detect login redirect — means session establishment failed
+		if (html.includes('name="user_name"') && html.includes('name="user_password"')) {
+			throw new Error("SnClient - fetchNodeLogs: got login page — session was not established");
+		}
+
+		const clean = (raw) => raw
+			.replace(/<br\s*\/?>/gi, "\n")
+			.replace(/<[^>]+>/g, "")
+			.replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+			.replace(/&amp;/g, "&").replace(/&quot;/g, '"')
+			.replace(/&nbsp;/g, " ")
+			.trim();
+
+		const entries = [];
+		let pos = 0;
+
+		while (true) {
+			const trStart = html.indexOf("<tr", pos);
+			if (trStart === -1) break;
+
+			const trEnd = html.indexOf("</tr>", trStart);
+			if (trEnd === -1) break;
+
+			const row = html.slice(trStart, trEnd + 5);
+			pos = trEnd + 5;
+
+			// Skip header rows
+			if (/class="header"/i.test(row)) continue;
+
+			// Extract all <td> cell contents
+			const cells = [];
+			let cellPos = 0;
+			while (true) {
+				const tdStart = row.indexOf("<td", cellPos);
+				if (tdStart === -1) break;
+				const tdContentStart = row.indexOf(">", tdStart) + 1;
+				const tdEnd = row.indexOf("</td>", tdContentStart);
+				if (tdEnd === -1) break;
+				cells.push(row.slice(tdContentStart, tdEnd));
+				cellPos = tdEnd + 5;
+			}
+
+			if (cells.length < 5) continue;
+
+			entries.push({
+				timestamp: clean(cells[0]),
+				level: clean(cells[1]),
+				thread: clean(cells[2]),
+				session: clean(cells[3]),
+				message: clean(cells[4]),
+			});
+		}
+
+		return { count: entries.length, entries };
 	}
 
 	/**
