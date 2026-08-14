@@ -1,13 +1,36 @@
 /**
- * ServiceNow Table API client using native fetch with Basic Auth.
+ * ServiceNow Table API client using native fetch.
  * Wraps the standard REST Table API endpoints for CRUD operations.
+ *
+ * REST calls authenticate with either Basic Auth or an OAuth bearer token (when a tokenProvider
+ * is supplied). The session-based tools (executeScript, fetchNodeLogs) always need a username and
+ * password — they form-login against /login.do, which a bearer token cannot substitute for.
  */
 export class SnClient {
-	constructor({ instance, username, password }) {
+	constructor({ instance, username, password, tokenProvider = null }) {
 		this.baseUrl = instance.replace(/\/+$/, "");
 		this.username = username;
 		this.password = password;
-		this.authHeader = "Basic " + Buffer.from(`${username}:${password}`).toString("base64");
+		this.tokenProvider = tokenProvider;
+		this.hasSessionAuth = Boolean(username && password);
+		this.authHeader = this.hasSessionAuth
+			? "Basic " + Buffer.from(`${username}:${password}`).toString("base64")
+			: null;
+	}
+
+	/**
+	 * @name _resolveAuthHeader
+	 * @description Builds the Authorization header value for a REST request — a bearer token when
+	 * running in OAuth mode, otherwise the static Basic header.
+	 * @param {object} [options]
+	 * @param {boolean} [options.forceRefresh] - Mint a fresh access token instead of reusing the cached one
+	 * @returns {string} The Authorization header value
+	 */
+	async _resolveAuthHeader({ forceRefresh = false } = {}) {
+		if (this.tokenProvider) {
+			return "Bearer " + (await this.tokenProvider.getAccessToken({ forceRefresh }));
+		}
+		return this.authHeader;
 	}
 
 	/**
@@ -18,9 +41,10 @@ export class SnClient {
 	 * @param {object} [options] - Optional request options
 	 * @param {object} [options.params] - Query parameters to append to the URL
 	 * @param {object} [options.body] - JSON body for POST/PATCH requests
+	 * @param {boolean} [options.forceRefresh] - Internal: mint a fresh token before sending (401 retry)
 	 * @returns {object|null} The parsed JSON response, or null for 204 responses
 	 */
-	async request(method, path, { params, body } = {}) {
+	async request(method, path, { params, body, forceRefresh = false } = {}) {
 		const url = new URL(path, this.baseUrl);
 
 		// Append query parameters to the URL
@@ -33,7 +57,7 @@ export class SnClient {
 		}
 
 		const headers = {
-			Authorization: this.authHeader,
+			Authorization: await this._resolveAuthHeader({ forceRefresh }),
 			Accept: "application/json",
 		};
 		if (body) headers["Content-Type"] = "application/json";
@@ -43,6 +67,11 @@ export class SnClient {
 			headers,
 			body: body ? JSON.stringify(body) : undefined,
 		});
+
+		// An expired access token surfaces as a 401 — refresh once and replay the request.
+		if (response.status === 401 && this.tokenProvider && !forceRefresh) {
+			return this.request(method, path, { params, body, forceRefresh: true });
+		}
 
 		if (!response.ok) {
 			const badResponseText = await response.text();
@@ -105,6 +134,10 @@ export class SnClient {
 	 * @returns {{ cookies: string, csrfToken: string }}
 	 */
 	async _getSession() {
+		if (!this.hasSessionAuth) {
+			throw new Error("SnClient - _getSession: session-based tools require SN_<INSTANCE>_USERNAME and SN_<INSTANCE>_PASSWORD — an OAuth bearer token cannot establish a UI session");
+		}
+
 		const formHeaders = {
 			"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
 			"User-Agent": "sn-mcp-bridge",
