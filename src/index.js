@@ -5,24 +5,78 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { SnClient } from "./sn-client.js";
 import { generateDBML } from "./dbml.js";
+import { OAuthProvider, DEFAULT_REDIRECT_URI } from "./oauth.js";
 
 // ── Config ──────────────────────────────────────────────────────────────────
 
 const instanceURL = process.env.SN_INSTANCE;
-const instanceName = instanceURL ? new URL(instanceURL).hostname.split('.')[0].toUpperCase().replace(/-/g, '_') : null;
-const prefix = instanceName ? `SN_${instanceName}` : null;
 
-const username = (prefix && process.env[`${prefix}_USERNAME`]) || process.env.SN_USERNAME;
-const password = (prefix && process.env[`${prefix}_PASSWORD`]) || process.env.SN_PASSWORD;
+if (!instanceURL) {
+	console.error("sn-mcp-bridge: Missing required env var: SN_INSTANCE");
+	process.exit(1);
+}
 
-if (!instanceURL || !username || !password) {
+let instanceName;
+try {
+	instanceName = new URL(instanceURL).hostname.split('.')[0].toUpperCase().replace(/-/g, '_');
+} catch {
+	console.error(`sn-mcp-bridge: SN_INSTANCE is not a valid URL: ${instanceURL}`);
+	process.exit(1);
+}
+
+const prefix = `SN_${instanceName}`;
+
+/**
+ * @name envFor
+ * @description Reads an instance-prefixed env var, falling back to the unprefixed form.
+ * e.g. for https://mydev01.service-now.com, "USERNAME" resolves SN_MYDEV01_USERNAME then SN_USERNAME.
+ * @param {string} name - The unprefixed variable suffix (e.g. "USERNAME")
+ * @returns {string|undefined} The resolved value
+ */
+const envFor = (name) => process.env[`${prefix}_${name}`] || process.env[`SN_${name}`];
+
+const username = envFor("USERNAME");
+const password = envFor("PASSWORD");
+
+const clientId = envFor("CLIENT_ID");
+const clientSecret = envFor("CLIENT_SECRET");
+const grantType = envFor("GRANT_TYPE");
+
+// OAuth is opt-in: presence of any OAuth var means the user intends the OAuth path, so a partial
+// set is an error rather than a silent fall-back to basic auth.
+const oauthVars = { CLIENT_ID: clientId, CLIENT_SECRET: clientSecret, GRANT_TYPE: grantType };
+const useOAuth = Object.values(oauthVars).some(Boolean);
+
+let tokenProvider = null;
+
+if (useOAuth) {
+	const missing = Object.entries(oauthVars).filter(([, value]) => !value).map(([name]) => `${prefix}_${name}`);
+	if (missing.length) {
+		console.error(`sn-mcp-bridge: OAuth is partially configured — missing ${missing.join(", ")}. Set all of CLIENT_ID, CLIENT_SECRET, and GRANT_TYPE, or none of them to use basic auth.`);
+		process.exit(1);
+	}
+
+	if (grantType !== "authorization_code") {
+		console.error(`sn-mcp-bridge: unsupported grant_type '${grantType}' — only 'authorization_code' is supported`);
+		process.exit(1);
+	}
+
+	tokenProvider = new OAuthProvider({
+		instance: instanceURL,
+		clientId,
+		clientSecret,
+		redirectUri: envFor("REDIRECT_URI") || DEFAULT_REDIRECT_URI,
+		refreshToken: envFor("REFRESH_TOKEN"),
+		usePkce: envFor("USE_PKCE") === "true",
+	});
+} else if (!username || !password) {
 	console.error("sn-mcp-bridge: Missing required env vars: SN_INSTANCE, SN_USERNAME, SN_PASSWORD");
 	process.exit(1);
 }
 
-const client = new SnClient({ instance: instanceURL, username, password });
+const client = new SnClient({ instance: instanceURL, username, password, tokenProvider });
 const server = new McpServer(
-	{ name: "sn-mcp-bridge", version: "1.0.0" },
+	{ name: "sn-mcp-bridge", version: "1.4.0" },
 	{
 		instructions: [
 			"ServiceNow is a record-based development platform. All development artifacts — script includes, business rules, client scripts, UI actions, ACLs, UI policies, scheduled jobs, and more — are records in system tables. Creating, reading, updating, and deleting these records through the CRUD tools IS how you develop on the platform. There is no separate 'code layer'; the Table API is the development API.",
@@ -566,9 +620,18 @@ server.registerTool(
 	}
 );
 
+// ── Session-based Tools ─────────────────────────────────────────────────────
+// The tools below hit UI endpoints (sys.scripts.do, ui_page_process.do) that require a form-login
+// session, which an OAuth bearer token cannot provide. When only OAuth credentials are configured
+// they are not registered at all, so the model never sees a tool it cannot call.
+
+const registerSessionTool = client.hasSessionAuth
+	? server.registerTool.bind(server)
+	: () => {};
+
 // ── Background Script Tool ──────────────────────────────────────────────────
 
-server.registerTool(
+registerSessionTool(
 	"execute_script",
 	{
 		description: "Execute a background script on the ServiceNow instance. Runs server-side JavaScript via sys.scripts.do. Use with caution — scripts execute with the authenticated user's permissions and can modify data.",
@@ -585,7 +648,7 @@ server.registerTool(
 
 // ── Diagnostics Tools ───────────────────────────────────────────────────────
 
-server.registerTool(
+registerSessionTool(
 	"explore_syslog",
 	{
 		description: "Query the ServiceNow application log (syslog table). Shows gs.info/warn/error output, script include logs, and application exceptions. Runs in global scope — required because syslog is not accessible via the Table API. Use this as layer 3 of the diagnostic stack: did our scripts run and what did they log?",
@@ -633,7 +696,7 @@ server.registerTool(
 	}
 );
 
-server.registerTool(
+registerSessionTool(
 	"explore_syslog_transaction",
 	{
 		description: "Query the ServiceNow transaction log (syslog_transaction table). Shows every HTTP request that reached the SN application layer — URL, user, response code, session. Runs in global scope — required because syslog_transaction is not accessible via the Table API. IMPORTANT: if a transaction does not appear here, the request never reached the application layer — it was blocked at the network/ADC level. Use this as layer 2 of the diagnostic stack: did the request reach the application?",
@@ -682,7 +745,7 @@ server.registerTool(
 	}
 );
 
-server.registerTool(
+registerSessionTool(
 	"explore_node_logs",
 	{
 		description: "Read the raw instance node logs — the deepest observability layer. Shows everything including requests blocked before scripts run, auth failures at the platform layer, scheduler activity, and session management. The only way to confirm whether a request reached the physical server at all. Uses the SN log file browser UI (ui_page_process.do) via HTTP + HTML parse, since the underlying Java API is security-restricted from scripts. Use this as layer 1 of the diagnostic stack: did the request reach the server? Time parameters are in UTC.",
@@ -717,7 +780,8 @@ server.registerTool(
 			//      timezone, which is not queryable via REST.
 			const [userResp, propResp] = await Promise.all([
 				client.get("/api/now/table/sys_user", {
-					sysparm_query: `user_name=${client.username}`,
+					// Resolve the caller server-side so this works under basic auth and OAuth alike.
+					sysparm_query: "sys_id=javascript:gs.getUserID()",
 					sysparm_fields: "time_zone",
 					sysparm_limit: "1",
 				}),
@@ -777,6 +841,20 @@ server.registerTool(
 
 // ── Start ───────────────────────────────────────────────────────────────────
 
+// Acquire a token before connecting so browser consent and any OAuth misconfiguration surface at
+// startup rather than partway through the first tool call.
+if (tokenProvider) {
+	try {
+		await tokenProvider.prime();
+	} catch (error) {
+		console.error(`sn-mcp-bridge: OAuth authorization failed — ${error.message}`);
+		process.exit(1);
+	}
+}
+
 const transport = new StdioServerTransport();
 await server.connect(transport);
-console.error(`sn-mcp-bridge running — ${instanceURL}`);
+
+const mode = tokenProvider ? "oauth" : "basic";
+const sessionTools = client.hasSessionAuth ? "session tools enabled" : "session tools disabled (no username/password)";
+console.error(`sn-mcp-bridge running — ${instanceURL} (${mode}, ${sessionTools})`);
