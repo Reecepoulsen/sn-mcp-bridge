@@ -3,8 +3,9 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { SnClient } from "./sn-client.js";
+import { SnClient, tableParams } from "./sn-client.js";
 import { generateDBML } from "./dbml.js";
+import { describeCatalogItem } from "./catalog.js";
 import { OAuthProvider, DEFAULT_REDIRECT_URI } from "./oauth.js";
 
 // ── Config ──────────────────────────────────────────────────────────────────
@@ -76,7 +77,7 @@ if (useOAuth) {
 
 const client = new SnClient({ instance: instanceURL, username, password, tokenProvider });
 const server = new McpServer(
-	{ name: "sn-mcp-bridge", version: "1.4.0" },
+	{ name: "sn-mcp-bridge", version: "1.5.0" },
 	{
 		instructions: [
 			"ServiceNow is a record-based development platform. All development artifacts — script includes, business rules, client scripts, UI actions, ACLs, UI policies, scheduled jobs, and more — are records in system tables. Creating, reading, updating, and deleting these records through the CRUD tools IS how you develop on the platform. There is no separate 'code layer'; the Table API is the development API.",
@@ -108,25 +109,6 @@ const server = new McpServer(
  */
 function ok(data) {
 	return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
-}
-
-/**
- * @name tableParams
- * @description Builds the sysparm query parameters for a Table API request
- * @param {object} [options] - Options to map to sysparm parameters
- * @param {string} [options.query] - An encoded query string (sysparm_query)
- * @param {string|string[]} [options.fields] - Field names to include (sysparm_fields)
- * @param {number} [options.limit] - Max records to return (sysparm_limit)
- * @param {string} [options.displayValue] - Display value mode: "true", "false", or "all" (sysparm_display_value)
- * @returns {object} A query parameters object ready for the client
- */
-function tableParams({ query, fields, limit, displayValue } = {}) {
-	const params = { sysparm_exclude_reference_link: "true" };
-	if (query) params.sysparm_query = query;
-	if (fields) params.sysparm_fields = Array.isArray(fields) ? fields.join(",") : fields;
-	if (limit) params.sysparm_limit = limit;
-	if (displayValue !== undefined) params.sysparm_display_value = displayValue;
-	return params;
 }
 
 
@@ -617,6 +599,27 @@ server.registerTool(
 		const dbml = await generateDBML(client, query, options);
 		if (!dbml) return { content: [{ type: "text", text: "No tables matched the query." }] };
 		return { content: [{ type: "text", text: dbml }] };
+	}
+);
+
+// ── Service Catalog Tool ───────────────────────────────────────────────────
+
+server.registerTool(
+	"describe_catalog_item",
+	{
+		description: [
+			"Use this tool to retrieve the entire configuration of a Service Catalog item, record producer, or order guide in one call — the item record, its variables (with choices and resolved lookup options), variable sets, catalog UI policies and their actions, catalog client scripts, catalog/category placement, and user criteria.",
+			"",
+			"Prefer this over stitching together get_record/query_data calls against sc_cat_item, item_option_new, io_set_item, catalog_ui_policy and catalog_script_client, and over running a background script.",
+			"",
+			"Empty fields are stripped from every record to keep the response readable — a missing key means the field is empty, not that it does not exist. The 'rendered_view' section holds the raw /api/sn_sc/servicecatalog/items response (how the form renders at runtime); it reports an error when the authenticated user has no access to the item, while every other section still populates.",
+		].join("\n"),
+		inputSchema: {
+			item: z.string().describe("The sys_id OR the exact name of the catalog item, record producer, or order guide. Prefer sys_id — names are not unique in ServiceNow, and an ambiguous name returns an error listing the candidates to choose from."),
+		},
+	},
+	async ({ item }) => {
+		return ok(await describeCatalogItem(client, item));
 	}
 );
 

@@ -1,6 +1,6 @@
 {
   "name": "sn-mcp-bridge",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "Lightweight MCP server for the ServiceNow Table API",
   "type": "module",
   "bin": {
@@ -27,10 +27,7 @@
     "node": ">=18.0.0"
   },
   "files": [
-    "index.js",
-    "sn-client.js",
-    "oauth.js",
-    "dbml.js",
+    "src",
     "README.md",
     "LICENSE"
   ],
