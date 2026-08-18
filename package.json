@@ -27,10 +27,7 @@
     "node": ">=18.0.0"
   },
   "files": [
-    "index.js",
-    "sn-client.js",
-    "oauth.js",
-    "dbml.js",
+    "src",
     "README.md",
     "LICENSE"
   ],

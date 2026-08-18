@@ -38,6 +38,22 @@ There are plenty of open-source ServiceNow MCP servers being shared in the commu
 | `get_application_tables` | List tables belonging to a given scope                                          |
 | `get_scoped_app_files`   | List all application files for a scope, grouped by type                         |
 
+### Code Management
+
+Every development artifact extends `sys_metadata`, so each write is stamped with an application scope and captured in an update set — both taken from the calling user's current context, not from the record you send. These tools make that context visible and controllable.
+
+| Tool                       | Description                                                                                       |
+| -------------------------- | ------------------------------------------------------------------------------------------------- |
+| `get_dev_context`          | Report the current application scope and update set, with warnings for anything that would misfile a write |
+| `switch_dev_context`       | Set the current scope and update set. The only tool that changes context — the CRUD tools never do |
+| `create_update_set`        | Create an update set (and make it current), optionally batched under a parent                     |
+| `list_update_sets`         | List update sets with state, batch structure, and change counts                                   |
+| `get_update_set_contents`  | List the changes an update set carries, grouped by type, following the batch hierarchy            |
+| `set_update_set_state`     | Mark an update set Complete or Ignore, refusing to reopen a completed one                         |
+| `batch_update_sets`        | Add update sets to a batch or remove them, by setting `parent`                                    |
+
+Call `get_dev_context` before writing to any `sys_metadata`-derived table — a write made in the wrong context succeeds silently and lands in the wrong scope or an untracked update set. See [`src/code_management_and_migration/AI.md`](src/code_management_and_migration/AI.md) for the underlying platform rules.
+
 ### Analytics
 
 | Tool               | Description                                                  |

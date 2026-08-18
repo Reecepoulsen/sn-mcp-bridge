@@ -6,6 +6,8 @@ import { z } from "zod";
 import { SnClient } from "./sn-client.js";
 import { generateDBML } from "./dbml.js";
 import { OAuthProvider, DEFAULT_REDIRECT_URI } from "./oauth.js";
+import { ok, tableParams } from "./mcp-helpers.js";
+import { registerDevContextTools } from "./code_management_and_migration/dev-context.js";
 
 // ── Config ──────────────────────────────────────────────────────────────────
 
@@ -93,42 +95,12 @@ const server = new McpServer(
 			"- sys_update_set — Update sets (change tracking and deployment units)",
 			"- sys_properties — System properties (configuration values)",
 			"",
+			"Every development table above extends sys_metadata, so each write is stamped with an application scope and captured in an update set — both taken from the calling user's current context, not from the record you send. Call get_dev_context before writing to any of them, and switch_dev_context to correct anything it flags. A write made in the wrong context succeeds silently and lands in the wrong scope or an untracked update set.",
+			"",
 			"Use execute_script as a server-side runtime for tasks that go beyond what CRUD operations can accomplish — testing logic, running GlideRecord queries with complex conditions, calling script includes, performing multi-step transactions, or any operation that requires server-side JavaScript execution.",
 		].join("\n"),
 	}
 );
-
-// ── Helpers ─────────────────────────────────────────────────────────────────
-
-/**
- * @name ok
- * @description Wraps data in the MCP tool response format
- * @param {any} data - The data to return to the client
- * @returns {object} An MCP-compliant tool result with text content
- */
-function ok(data) {
-	return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
-}
-
-/**
- * @name tableParams
- * @description Builds the sysparm query parameters for a Table API request
- * @param {object} [options] - Options to map to sysparm parameters
- * @param {string} [options.query] - An encoded query string (sysparm_query)
- * @param {string|string[]} [options.fields] - Field names to include (sysparm_fields)
- * @param {number} [options.limit] - Max records to return (sysparm_limit)
- * @param {string} [options.displayValue] - Display value mode: "true", "false", or "all" (sysparm_display_value)
- * @returns {object} A query parameters object ready for the client
- */
-function tableParams({ query, fields, limit, displayValue } = {}) {
-	const params = { sysparm_exclude_reference_link: "true" };
-	if (query) params.sysparm_query = query;
-	if (fields) params.sysparm_fields = Array.isArray(fields) ? fields.join(",") : fields;
-	if (limit) params.sysparm_limit = limit;
-	if (displayValue !== undefined) params.sysparm_display_value = displayValue;
-	return params;
-}
-
 
 // ── CRUD Tools ──────────────────────────────────────────────────────────────
 
@@ -431,6 +403,12 @@ server.registerTool(
 		return ok(appFilesByTable);
 	}
 );
+
+// ── Code Management Tools ───────────────────────────────────────────────────
+// Application scope and update set control. Registered here because every sys_metadata write made by
+// the CRUD tools above depends on the context these manage.
+
+registerDevContextTools(server, client);
 
 // ── Aggregate Tools ─────────────────────────────────────────────────────────
 

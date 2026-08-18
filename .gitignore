@@ -6,3 +6,4 @@ package-lock.json
 *.log
 .claude/
 .codex/
+sn_docs
