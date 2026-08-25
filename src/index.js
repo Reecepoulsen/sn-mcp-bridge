@@ -7,6 +7,8 @@ import { SnClient, tableParams } from "./sn-client.js";
 import { generateDBML } from "./dbml.js";
 import { describeCatalogItem } from "./catalog.js";
 import { OAuthProvider, DEFAULT_REDIRECT_URI } from "./oauth.js";
+import { ok, tableParams } from "./mcp-helpers.js";
+import { registerDevContextTools } from "./code_management_and_migration/dev-context.js";
 
 // ── Config ──────────────────────────────────────────────────────────────────
 
@@ -94,6 +96,8 @@ const server = new McpServer(
 			"- sys_update_set — Update sets (change tracking and deployment units)",
 			"- sys_properties — System properties (configuration values)",
 			"",
+			"Every development table above extends sys_metadata, so each write is stamped with an application scope and captured in an update set — both taken from the calling user's current context, not from the record you send. Call get_dev_context before writing to any of them, and switch_dev_context to correct anything it flags. A write made in the wrong context succeeds silently and lands in the wrong scope or an untracked update set.",
+			"",
 			"Use execute_script as a server-side runtime for tasks that go beyond what CRUD operations can accomplish — testing logic, running GlideRecord queries with complex conditions, calling script includes, performing multi-step transactions, or any operation that requires server-side JavaScript execution.",
 		].join("\n"),
 	}
@@ -110,7 +114,6 @@ const server = new McpServer(
 function ok(data) {
 	return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
 }
-
 
 // ── CRUD Tools ──────────────────────────────────────────────────────────────
 
@@ -413,6 +416,12 @@ server.registerTool(
 		return ok(appFilesByTable);
 	}
 );
+
+// ── Code Management Tools ───────────────────────────────────────────────────
+// Application scope and update set control. Registered here because every sys_metadata write made by
+// the CRUD tools above depends on the context these manage.
+
+registerDevContextTools(server, client);
 
 // ── Aggregate Tools ─────────────────────────────────────────────────────────
 

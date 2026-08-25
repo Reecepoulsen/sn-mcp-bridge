@@ -42,7 +42,7 @@ for (const [k, v] of Object.entries(process.env)) if (k.startsWith("SN_")) env[k
 
 const transport = new StdioClientTransport({
 	command: process.execPath,
-	args: [path.join(import.meta.dirname, "index.js")],
+	args: [path.join(import.meta.dirname, "..", "src", "index.js")],
 	env,
 	stderr: "inherit", // surfaces the authorize URL and the startup banner
 });
