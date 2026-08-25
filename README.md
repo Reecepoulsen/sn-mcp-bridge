@@ -15,7 +15,7 @@ The server runs with the permissions of whatever user account you provide creden
 
 Authentication supports both **Basic Auth** and **OAuth 2.0 (authorization code)** — see [Authentication](#authentication).
 
-There are plenty of open-source ServiceNow MCP servers being shared in the community. This one exists to stay simple, pure, and easy to improve — plain JS with no build step (4 source files, native `fetch`, Node.js 18+), and adding a tool is one `server.registerTool()` call.
+There are plenty of open-source ServiceNow MCP servers being shared in the community. This one exists to stay simple, pure, and easy to improve — plain JS with no build step (5 source files, native `fetch`, Node.js 18+), and adding a tool is one `server.registerTool()` call.
 
 ## Tools
 
@@ -63,11 +63,12 @@ Call `get_dev_context` before writing to any `sys_metadata`-derived table — a 
 
 ### Advanced
 
-| Tool             | Description                                                                                                             |
-| ---------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `search_code`    | Search across script fields using the native Code Search API (falls back to table queries if the plugin is unavailable) |
-| `generate_dbml`  | Generate a DBML schema diagram definition from the instance's tables and relationships                                  |
-| `execute_script` | Run a background script on the instance via sys.scripts.do ¹                                                            |
+| Tool                    | Description                                                                                                             |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `search_code`           | Search across script fields using the native Code Search API (falls back to table queries if the plugin is unavailable) |
+| `generate_dbml`         | Generate a DBML schema diagram definition from the instance's tables and relationships                                  |
+| `describe_catalog_item` | Get the full configuration of a catalog item, record producer, or order guide — variables (with choices and lookup options), variable sets, UI policies, client scripts, placement, and user criteria — in one call |
+| `execute_script`        | Run a background script on the instance via sys.scripts.do ¹                                                            |
 
 ### Diagnostics
 

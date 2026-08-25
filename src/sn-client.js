@@ -6,6 +6,26 @@
  * is supplied). The session-based tools (executeScript, fetchNodeLogs) always need a username and
  * password — they form-login against /login.do, which a bearer token cannot substitute for.
  */
+
+/**
+ * @name tableParams
+ * @description Builds the sysparm query parameters for a Table API request
+ * @param {object} [options] - Options to map to sysparm parameters
+ * @param {string} [options.query] - An encoded query string (sysparm_query)
+ * @param {string|string[]} [options.fields] - Field names to include (sysparm_fields)
+ * @param {number} [options.limit] - Max records to return (sysparm_limit)
+ * @param {string} [options.displayValue] - Display value mode: "true", "false", or "all" (sysparm_display_value)
+ * @returns {object} A query parameters object ready for the client
+ */
+export function tableParams({ query, fields, limit, displayValue } = {}) {
+	const params = { sysparm_exclude_reference_link: "true" };
+	if (query) params.sysparm_query = query;
+	if (fields) params.sysparm_fields = Array.isArray(fields) ? fields.join(",") : fields;
+	if (limit) params.sysparm_limit = limit;
+	if (displayValue !== undefined) params.sysparm_display_value = displayValue;
+	return params;
+}
+
 export class SnClient {
 	constructor({ instance, username, password, tokenProvider = null }) {
 		this.baseUrl = instance.replace(/\/+$/, "");
