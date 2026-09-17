@@ -3,7 +3,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { SnClient, tableParams } from "./sn-client.js";
+import { SnClient } from "./sn-client.js";
 import { generateDBML } from "./dbml.js";
 import { describeCatalogItem } from "./catalog.js";
 import { OAuthProvider, DEFAULT_REDIRECT_URI } from "./oauth.js";
@@ -102,18 +102,6 @@ const server = new McpServer(
 		].join("\n"),
 	}
 );
-
-// ── Helpers ─────────────────────────────────────────────────────────────────
-
-/**
- * @name ok
- * @description Wraps data in the MCP tool response format
- * @param {any} data - The data to return to the client
- * @returns {object} An MCP-compliant tool result with text content
- */
-function ok(data) {
-	return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
-}
 
 // ── CRUD Tools ──────────────────────────────────────────────────────────────
 
